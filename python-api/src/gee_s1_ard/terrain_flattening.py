@@ -174,6 +174,9 @@ def slope_correction(
 
         bandNames = image.bandNames()
 
+        # Select data bands (e.g. vv or vh)
+        dataBandNames = [b for b in bandNames if b != "angle"]
+
         geom = image.geometry()
         proj = image.select(1).projection()
 
@@ -227,7 +230,7 @@ def slope_correction(
 
         # 2.2
         # Gamma_nought
-        gamma0 = image.divide(theta_iRad.cos())
+        gamma0 = image.select(dataBandNames).divide(theta_iRad.cos())
 
         if TERRAIN_FLATTENING_MODEL == "VOLUME":
             # Volumetric Model
@@ -244,13 +247,13 @@ def slope_correction(
         # get Layover/Shadow mask
         mask = _masking(
             alpha_rRad, theta_iRad, TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER
-        )
-        output = gamma0_flat.mask(mask).rename(bandNames).copyProperties(image)
+        ).rename("layover_shadow_mask")
         # Convert back to degrees
         local_incidence_angle = local_incidence_angle.multiply(180.0 / math.pi).rename(
             "local_incidence_angle"
         )
-        output = ee.Image(output).addBands(local_incidence_angle, None, True)
+        output = ee.Image(gamma0_flat).addBands(local_incidence_angle, None, True)
+        output = ee.Image(gamma0_flat).addBands(mask, None, True)
 
         return output.set("system:time_start", image.get("system:time_start"))
 
