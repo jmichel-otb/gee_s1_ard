@@ -252,8 +252,11 @@ def slope_correction(
         local_incidence_angle = local_incidence_angle.multiply(180.0 / math.pi).rename(
             "local_incidence_angle"
         )
-        output = ee.Image(gamma0_flat).addBands(local_incidence_angle, None, True)
-        output = ee.Image(gamma0_flat).addBands(mask, None, True)
+        output = (
+            ee.Image(gamma0_flat)
+            .addBands(local_incidence_angle, None, True)
+            .addBands(mask, None, True)
+        )
 
         return output.set("system:time_start", image.get("system:time_start"))
 
