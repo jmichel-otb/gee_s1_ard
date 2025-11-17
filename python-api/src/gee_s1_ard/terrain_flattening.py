@@ -175,7 +175,7 @@ def slope_correction(
         bandNames = image.bandNames()
 
         # Select data bands (e.g. vv or vh)
-        dataBandNames = [b for b in bandNames if b != "angle"]
+        dataBandNames = bandNames.remove("angle")
 
         geom = image.geometry()
         proj = image.select(1).projection()
