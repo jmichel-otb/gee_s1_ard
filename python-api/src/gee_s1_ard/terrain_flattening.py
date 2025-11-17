@@ -10,15 +10,21 @@ Angular-Based Radiometric Slope Correction for Sentinel-1 on Google Earth Engine
   Remote Sensing, 12(11), [1867]. https://doi.org/10.3390/rs12111867
 """
 
-import ee
 import math
+
+import ee
 
 # ---------------------------------------------------------------------------//
 # Terrain Flattening
 # ---------------------------------------------------------------------------//
 
-def slope_correction(collection, TERRAIN_FLATTENING_MODEL
-                                 ,DEM, TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER):
+
+def slope_correction(
+    collection,
+    TERRAIN_FLATTENING_MODEL,
+    DEM,
+    TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER,
+):
     """
 
     Parameters
@@ -40,7 +46,7 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
 
     """
 
-    ninetyRad = ee.Image.constant(90).multiply(math.pi/180)
+    ninetyRad = ee.Image.constant(90).multiply(math.pi / 180)
 
     def _volumetric_model_SCF(theta_iRad, alpha_rRad):
         """
@@ -60,9 +66,10 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
         """
 
         # Volume model
-        nominator = (ninetyRad.subtract(theta_iRad).add(alpha_rRad)).tan()
+        local_incidence_angle = ninetyRad.subtract(theta_iRad).add(alpha_rRad)
+        nominator = (local_incidence_angle).tan()
         denominator = (ninetyRad.subtract(theta_iRad)).tan()
-        return nominator.divide(denominator)
+        return nominator.divide(denominator), local_incidence_angle
 
     def _direct_model_SCF(theta_iRad, alpha_rRad, alpha_azRad):
         """
@@ -81,13 +88,14 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
 
         """
         # Surface model
+        local_incidence_angle = ninetyRad.subtract(theta_iRad).add(alpha_rRad)
         nominator = (ninetyRad.subtract(theta_iRad)).cos()
-        denominator = alpha_azRad.cos().multiply((ninetyRad.subtract(theta_iRad).add(alpha_rRad)).cos())
-        return nominator.divide(denominator)
+        denominator = alpha_azRad.cos().multiply((local_incidence_angle).cos())
+        return nominator.divide(denominator), local_incidence_angle
 
     def _erode(image, distance):
         """
-        
+
 
         Parameters
         ----------
@@ -105,8 +113,13 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
         """
         # buffer function (thanks Noel)
 
-        d = (image.Not().unmask(1).fastDistanceTransform(30).sqrt()
-             .multiply(ee.Image.pixelArea().sqrt()))
+        d = (
+            image.Not()
+            .unmask(1)
+            .fastDistanceTransform(30)
+            .sqrt()
+            .multiply(ee.Image.pixelArea().sqrt())
+        )
 
         return image.updateMask(d.gt(distance))
 
@@ -131,20 +144,21 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
         """
         # calculate masks
         # layover, where slope > radar viewing angle
-        layover = alpha_rRad.lt(theta_iRad).rename('layover')
+        layover = alpha_rRad.lt(theta_iRad).rename("layover")
         # shadow
-        shadow = alpha_rRad.gt(ee.Image.constant(-1)
-                        .multiply(ninetyRad.subtract(theta_iRad))).rename('shadow')
+        shadow = alpha_rRad.gt(
+            ee.Image.constant(-1).multiply(ninetyRad.subtract(theta_iRad))
+        ).rename("shadow")
         # combine layover and shadow
         mask = layover.And(shadow)
         # add buffer to final mask
-        if (buffer > 0):
+        if buffer > 0:
             mask = _erode(mask, buffer)
-        return mask.rename('no_data_mask')
+        return mask.rename("no_data_mask")
 
     def _correct(image):
         """
-        
+
 
         Parameters
         ----------
@@ -159,44 +173,47 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
         """
 
         bandNames = image.bandNames()
-        
+
         geom = image.geometry()
         proj = image.select(1).projection()
 
-        elevation = DEM.resample('bilinear').reproject(proj,None, 10).clip(geom)
+        elevation = DEM.resample("bilinear").reproject(proj, None, 10).clip(geom)
 
         # calculate the look direction
-        heading = ee.Terrain.aspect(image.select('angle')).reduceRegion(ee.Reducer.mean(), image.geometry(), 1000)
+        heading = ee.Terrain.aspect(image.select("angle")).reduceRegion(
+            ee.Reducer.mean(), image.geometry(), 1000
+        )
 
-        
-        #in case of null values for heading replace with 0
-        heading = ee.Dictionary(heading).combine({'aspect': 0}, False).get('aspect')
-        
+        # in case of null values for heading replace with 0
+        heading = ee.Dictionary(heading).combine({"aspect": 0}, False).get("aspect")
+
         heading = ee.Algorithms.If(
             ee.Number(heading).gt(180),
             ee.Number(heading).subtract(360),
-            ee.Number(heading)
+            ee.Number(heading),
         )
-        
+
         # the numbering follows the article chapters
         # 2.1.1 Radar geometry
-        theta_iRad = image.select('angle').multiply(math.pi/180)
-        phi_iRad = ee.Image.constant(heading).multiply(math.pi/180)
-        
-        # 2.1.2 Terrain geometry
-        alpha_sRad = ee.Terrain.slope(elevation).select('slope').multiply(math.pi / 180)
+        theta_iRad = image.select("angle").multiply(math.pi / 180)
+        phi_iRad = ee.Image.constant(heading).multiply(math.pi / 180)
 
-        aspect = ee.Terrain.aspect(elevation).select('aspect').clip(geom)
-        
+        # 2.1.2 Terrain geometry
+        alpha_sRad = ee.Terrain.slope(elevation).select("slope").multiply(math.pi / 180)
+
+        aspect = ee.Terrain.aspect(elevation).select("aspect").clip(geom)
+
         aspect_minus = aspect.updateMask(aspect.gt(180)).subtract(360)
-        
-        phi_sRad = aspect.updateMask(aspect.lte(180))\
-            .unmask()\
-            .add(aspect_minus.unmask())\
-            .multiply(-1)\
+
+        phi_sRad = (
+            aspect.updateMask(aspect.lte(180))
+            .unmask()
+            .add(aspect_minus.unmask())
+            .multiply(-1)
             .multiply(math.pi / 180)
-          
-        #elevation = DEM.reproject(proj,None, 10).clip(geom)
+        )
+
+        # elevation = DEM.reproject(proj,None, 10).clip(geom)
 
         # 2.1.3 Model geometry
         # reduce to 3 angle
@@ -212,20 +229,29 @@ def slope_correction(collection, TERRAIN_FLATTENING_MODEL
         # Gamma_nought
         gamma0 = image.divide(theta_iRad.cos())
 
-        if (TERRAIN_FLATTENING_MODEL == 'VOLUME'):
+        if TERRAIN_FLATTENING_MODEL == "VOLUME":
             # Volumetric Model
-            scf = _volumetric_model_SCF(theta_iRad, alpha_rRad)
+            scf, local_incidence_angle = _volumetric_model_SCF(theta_iRad, alpha_rRad)
 
-        if (TERRAIN_FLATTENING_MODEL == 'DIRECT'):
-            scf = _direct_model_SCF(theta_iRad, alpha_rRad, alpha_azRad)
+        if TERRAIN_FLATTENING_MODEL == "DIRECT":
+            scf, local_incidence_angle = _direct_model_SCF(
+                theta_iRad, alpha_rRad, alpha_azRad
+            )
 
         # apply model for Gamm0
         gamma0_flat = gamma0.multiply(scf)
 
         # get Layover/Shadow mask
-        mask = _masking(alpha_rRad, theta_iRad, TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER)
+        mask = _masking(
+            alpha_rRad, theta_iRad, TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER
+        )
         output = gamma0_flat.mask(mask).rename(bandNames).copyProperties(image)
-        output = ee.Image(output).addBands(image.select('angle'), None, True)
+        # Convert back to degrees
+        local_incidence_angle = local_incidence_angle.multiply(180.0 / math.pi).rename(
+            "local_incidence_angle"
+        )
+        output = ee.Image(output).addBands(local_incidence_angle, None, True)
 
-        return output.set('system:time_start', image.get('system:time_start'))
+        return output.set("system:time_start", image.get("system:time_start"))
+
     return collection.map(_correct)
