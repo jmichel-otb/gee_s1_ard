@@ -180,7 +180,7 @@ def slope_correction(
         geom = image.geometry()
         proj = image.select(1).projection()
 
-        elevation = DEM.resample("bilinear").reproject(proj, None, 10).clip(geom)
+        elevation = DEM.reproject(proj, None, 10).clip(geom)
 
         # calculate the look direction
         heading = ee.Terrain.aspect(image.select("angle")).reduceRegion(
